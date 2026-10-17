@@ -1,100 +1,119 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle, Plus, RefreshCw, Link2, Lock, LogOut } from 'lucide-react';
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
+} from 'recharts';
+import {
+  CheckCircle2, Clock, AlertCircle, RefreshCw, Lock, LogOut,
+  LayoutDashboard, Activity, HeartHandshake, Users, ArrowUpRight, CheckSquare, AlertTriangle
+} from 'lucide-react';
 import Papa from 'papaparse';
 
+// ==========================================
+// PASTE YOUR PUBLISHED GOOGLE SHEET CSV LINK HERE
+// ==========================================
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTd1xCoJK85LdFkRfpJFv19rLxh3tgJA8qv91oADnUaewOnA9gqiG8JyYZG2eZfWamTBAXpv4VfMdTw/pub?output=csv";
+const TEAM_ACCESS_CODE = "MOBKI081";
+
 export default function App() {
-  // --- AUTHENTICATION STATE ---
-  const TEAM_ACCESS_CODE = "FIELD2026"; // Change to your desired team passcode
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return sessionStorage.getItem('ops_auth') === 'true';
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem('ops_auth') === 'true');
   const [passcodeInput, setPasscodeInput] = useState('');
   const [authError, setAuthError] = useState(false);
+  const [activeTab, setActiveTab] = useState('summary');
 
-  // --- DATA & TASK STATE ---
-  const [dataPoints, setDataPoints] = useState(() => {
-    const saved = localStorage.getItem('ops_metrics');
-    return saved ? JSON.parse(saved) : [
-      { month: 'Jan', records: 420 },
-      { month: 'Feb', records: 680 },
-      { month: 'Mar', records: 950 },
-    ];
-  });
-
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem('ops_tasks');
-    return saved ? JSON.parse(saved) : [
-      { id: 1, title: 'Routine Data Quality Audit (RDQA)', status: 'Completed' },
-      { id: 2, title: 'Upload CAPI SurveyCTO clean dataset', status: 'In Progress' },
-    ];
-  });
-
-  const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem('sync_sheet_url') || '');
+  // Dashboard state fed entirely from Google Sheet
+  const [healthData, setHealthData] = useState([]);
+  const [protectionData, setProtectionData] = useState([]);
+  const [youthData, setYouthData] = useState([]);
+  const [sheetTasks, setSheetTasks] = useState([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
-  const [newTask, setNewTask] = useState('');
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
-  // --- LOCAL PERSISTENCE ---
-  useEffect(() => {
-    localStorage.setItem('ops_metrics', JSON.stringify(dataPoints));
-  }, [dataPoints]);
+  // Parse raw sheet rows into corresponding project data and tasks
+  const parseSheetData = (rows) => {
+    const health = [];
+    const protection = [];
+    const youth = [];
+    const tasks = [];
 
-  useEffect(() => {
-    localStorage.setItem('ops_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    rows.forEach((row, idx) => {
+      const type = (row.type || '').trim().toLowerCase();
+      const proj = (row.project || '').trim().toLowerCase();
 
-  // --- GOOGLE SHEETS LIVE SYNC ---
-  const syncFromLiveSheet = async (urlToFetch) => {
-    const targetUrl = urlToFetch || sheetUrl;
-    if (!targetUrl.trim()) return;
+      if (type === 'metric') {
+        const entry = {
+          period: row.period || `P${idx}`,
+          metric1: Number(row.metric1_val || 0),
+          metric2: Number(row.metric2_val || 0),
+          metric3: Number(row.metric3_val || 0),
+          label1: row.metric1_label || 'Metric 1',
+          label2: row.metric2_label || 'Metric 2',
+          label3: row.metric3_label || 'Metric 3',
+        };
+
+        if (proj === 'health') health.push(entry);
+        else if (proj === 'protection') protection.push(entry);
+        else if (proj === 'youth') youth.push(entry);
+      } else if (type === 'task') {
+        tasks.push({
+          id: idx + 1,
+          project: proj || 'health',
+          title: row.period || row.metric1_label || 'Untitled task',
+          status: row.status ? row.status.trim() : 'Pending'
+        });
+      }
+    });
+
+    setHealthData(health);
+    setProtectionData(protection);
+    setYouthData(youth);
+    setSheetTasks(tasks);
+  };
+
+  const fetchLiveSheet = async () => {
+    if (!SHEET_CSV_URL || SHEET_CSV_URL.includes("SampleLinkHere")) {
+      setFetchError("Please set your published Google Sheets CSV URL in src/App.jsx");
+      return;
+    }
 
     setIsSyncing(true);
+    setFetchError(null);
+
     try {
-      const response = await fetch(targetUrl);
+      const response = await fetch(SHEET_CSV_URL);
+      if (!response.ok) throw new Error("Could not reach Google Sheets endpoint");
       const csvText = await response.text();
 
       Papa.parse(csvText, {
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
-          const parsed = results.data
-            .filter((row) => row.month && row.records)
-            .map((row) => ({
-              month: String(row.month).trim(),
-              records: Number(row.records),
-            }));
-
-          if (parsed.length > 0) {
-            setDataPoints(parsed);
+          if (results.data && results.data.length > 0) {
+            parseSheetData(results.data);
             setLastSyncTime(new Date().toLocaleTimeString());
-            localStorage.setItem('sync_sheet_url', targetUrl);
           }
           setIsSyncing(false);
         },
-        error: () => setIsSyncing(false),
+        error: (err) => {
+          setFetchError("CSV parsing error: " + err.message);
+          setIsSyncing(false);
+        }
       });
     } catch (err) {
-      console.error('Failed to sync live data:', err);
+      setFetchError(err.message);
       setIsSyncing(false);
     }
   };
 
-  // --- AUTO-SYNC INTERVAL (EVERY 30 SECONDS) ---
+  // Auto-sync polling every 30 seconds
   useEffect(() => {
-    if (!isAuthenticated || !autoSyncEnabled || !sheetUrl.trim()) return;
+    if (!isAuthenticated) return;
+    fetchLiveSheet();
+    const interval = setInterval(fetchLiveSheet, 30000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
-    syncFromLiveSheet(sheetUrl);
-
-    const intervalId = setInterval(() => {
-      syncFromLiveSheet(sheetUrl);
-    }, 30000);
-
-    return () => clearInterval(intervalId);
-  }, [sheetUrl, autoSyncEnabled, isAuthenticated]);
-
-  // --- AUTH HANDLERS ---
+  // Auth Handlers
   const handleLogin = (e) => {
     e.preventDefault();
     if (passcodeInput.trim() === TEAM_ACCESS_CODE) {
@@ -112,27 +131,12 @@ export default function App() {
     setPasscodeInput('');
   };
 
-  // --- TASK & METRIC HANDLERS ---
-  const totalRecords = dataPoints.reduce((sum, item) => sum + Number(item.records || 0), 0);
+  // Calculations across Google Sheet data
+  const totalClinics = healthData.reduce((sum, r) => sum + r.metric1, 0);
+  const totalProtectionReach = protectionData.reduce((sum, r) => sum + r.metric1, 0);
+  const totalYouthParticipants = youthData.reduce((sum, r) => sum + r.metric1, 0);
+  const totalTasksCompleted = sheetTasks.filter(t => t.status.toLowerCase() === 'completed').length;
 
-  const handleAddTask = (e) => {
-    e.preventDefault();
-    if (!newTask.trim()) return;
-    setTasks([...tasks, { id: Date.now(), title: newTask, status: 'Pending' }]);
-    setNewTask('');
-  };
-
-  const toggleTaskStatus = (id) => {
-    setTasks(tasks.map((t) => {
-      if (t.id === id) {
-        const next = t.status === 'Completed' ? 'Pending' : t.status === 'Pending' ? 'In Progress' : 'Completed';
-        return { ...t, status: next };
-      }
-      return t;
-    }));
-  };
-
-  // --- GATE SCREEN: PASSCODE LOCK ---
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans text-slate-800">
@@ -141,7 +145,7 @@ export default function App() {
             <Lock className="w-6 h-6" />
           </div>
           <h2 className="text-xl font-bold text-slate-900 mb-1">Restricted Field Portal</h2>
-          <p className="text-xs text-slate-500 mb-6">Enter team passcode to view live tracker data</p>
+          <p className="text-xs text-slate-500 mb-6">Enter team passcode to view sheet data</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -169,158 +173,331 @@ export default function App() {
     );
   }
 
-  // --- MAIN DASHBOARD INTERFACE ---
   return (
-    <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 flex flex-col md:flex-row">
 
-        {/* Header */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-4 gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Health Operations & Data Tracker</h1>
-            <p className="text-sm text-slate-500">Live cloud sync with Google Sheets & CAPI endpoints</p>
+      {/* SIDEBAR NAVIGATION */}
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0">
+        <div>
+          <div className="p-6 border-b border-slate-800">
+            <h1 className="text-lg font-bold text-white tracking-wide">Operations Tracker</h1>
+            <p className="text-xs text-slate-400 mt-0.5">Direct Google Sheet Stream</p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Auto-Sync Toggle Button */}
+
+          <nav className="p-4 space-y-1">
             <button
-              onClick={() => setAutoSyncEnabled(!autoSyncEnabled)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${autoSyncEnabled
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                  : 'bg-slate-100 text-slate-600 border-slate-300'
+              onClick={() => setActiveTab('summary')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'summary' ? 'bg-blue-900 text-white' : 'hover:bg-slate-800 text-slate-400 hover:text-white'
                 }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full ${autoSyncEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
-                  }`}
-              />
-              {autoSyncEnabled ? 'Auto-sync: 30s' : 'Auto-sync: Off'}
+              <LayoutDashboard className="w-4 h-4" />
+              Executive Summary
             </button>
 
-            {/* Manual Sync Button */}
+            <div className="pt-4 pb-2 px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Project Streams
+            </div>
+
             <button
-              onClick={() => syncFromLiveSheet()}
-              disabled={isSyncing || !sheetUrl}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition"
+              onClick={() => setActiveTab('health')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'health' ? 'bg-blue-900 text-white' : 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                }`}
             >
-              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              {isSyncing ? 'Syncing...' : 'Sync Now'}
+              <Activity className="w-4 h-4 text-emerald-400" />
+              Primary Health & Clinics
             </button>
 
-            {/* Lock / Sign Out Button */}
             <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-lg text-xs font-medium transition"
-              title="Lock Dashboard"
+              onClick={() => setActiveTab('protection')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'protection' ? 'bg-blue-900 text-white' : 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                }`}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Lock
+              <HeartHandshake className="w-4 h-4 text-rose-400" />
+              Protection & Rights
+            </button>
+
+            <button
+              onClick={() => setActiveTab('youth')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'youth' ? 'bg-blue-900 text-white' : 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                }`}
+            >
+              <Users className="w-4 h-4 text-amber-400" />
+              Youth & Governance
+            </button>
+          </nav>
+        </div>
+
+        <div className="p-4 border-t border-slate-800 text-xs text-slate-400 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`} />
+              Sheet Polling: 30s
+            </span>
+            <button onClick={fetchLiveSheet} title="Force Sync" className="p-1 hover:text-white">
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
           </div>
-        </header>
-
-        {/* Live Cloud Data Link Bar */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
-          <div className="flex items-center gap-2 w-full md:w-3/4">
-            <Link2 className="w-5 h-5 text-slate-400 shrink-0" />
-            <input
-              type="text"
-              placeholder="Paste Google Sheets 'Publish to web' CSV link here..."
-              value={sheetUrl}
-              onChange={(e) => setSheetUrl(e.target.value)}
-              className="w-full text-xs px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-900 outline-none"
-            />
-          </div>
+          <p className="text-[11px] truncate">Last sync: {lastSyncTime || 'Pending connection'}</p>
           <button
-            onClick={() => syncFromLiveSheet(sheetUrl)}
-            className="w-full md:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap transition"
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition"
           >
-            Connect Cloud Sheet
+            <LogOut className="w-3.5 h-3.5" /> Lock Session
           </button>
         </div>
+      </aside>
 
-        {/* Metric Cards & Data Chart */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+      {/* MAIN VIEWPORT */}
+      <main className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+
+        {fetchError && (
+          <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{fetchError}</span>
+          </div>
+        )}
+
+        {/* VIEW 1: EXECUTIVE SUMMARY */}
+        {activeTab === 'summary' && (
+          <div className="space-y-6">
             <div>
-              <span className="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Aggregated Entries</span>
-              <span className="text-4xl font-extrabold text-blue-950 my-2 block">
-                {totalRecords.toLocaleString()}
-              </span>
-              <p className="text-xs text-slate-500">
-                {lastSyncTime ? `Last synced with cloud at ${lastSyncTime}` : 'Loaded from cached records'}
-              </p>
+              <h2 className="text-2xl font-extrabold text-slate-900">Organizational Performance Overview</h2>
+              <p className="text-sm text-slate-500">Live operational aggregates calculated from Google Sheets</p>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-100 text-xs text-slate-600 space-y-1">
-              <span className="font-semibold block text-slate-700">Cloud Status</span>
-              <p>• Rows synced: <span className="font-medium text-blue-900">{dataPoints.length}</span></p>
-              <p>• Data connection: <span className="font-medium text-emerald-700">{sheetUrl ? 'Connected' : 'Standalone'}</span></p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-400 uppercase">Health Audits</span>
+                <p className="text-3xl font-extrabold text-slate-900 my-1">{totalClinics.toLocaleString()}</p>
+                <span className="text-xs text-emerald-600 font-medium">PHC facilities monitored</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-400 uppercase">Protection Reach</span>
+                <p className="text-3xl font-extrabold text-slate-900 my-1">{totalProtectionReach.toLocaleString()}</p>
+                <span className="text-xs text-rose-600 font-medium">Individuals sensitized</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-400 uppercase">Youth Enrolled</span>
+                <p className="text-3xl font-extrabold text-slate-900 my-1">{totalYouthParticipants.toLocaleString()}</p>
+                <span className="text-xs text-blue-600 font-medium">Civic advocates</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <span className="text-xs font-bold text-slate-400 uppercase">Sheet Milestones</span>
+                <p className="text-3xl font-extrabold text-slate-900 my-1">{totalTasksCompleted} / {sheetTasks.length}</p>
+                <span className="text-xs text-slate-500 font-medium">Tasks marked completed</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div
+                onClick={() => setActiveTab('health')}
+                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-blue-900 cursor-pointer transition group"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="p-3 bg-emerald-50 text-emerald-700 rounded-lg">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-900 transition" />
+                </div>
+                <h3 className="font-bold text-slate-900 mb-1">Primary Health Systems</h3>
+                <p className="text-xs text-slate-500 mb-4">{healthData.length} reporting periods logged in Google Sheet.</p>
+                <span className="text-xs font-semibold text-blue-900 group-hover:underline">View Portfolio →</span>
+              </div>
+
+              <div
+                onClick={() => setActiveTab('protection')}
+                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-blue-900 cursor-pointer transition group"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="p-3 bg-rose-50 text-rose-700 rounded-lg">
+                    <HeartHandshake className="w-5 h-5" />
+                  </div>
+                  <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-900 transition" />
+                </div>
+                <h3 className="font-bold text-slate-900 mb-1">Protection & Girls' Rights</h3>
+                <p className="text-xs text-slate-500 mb-4">{protectionData.length} reporting periods logged in Google Sheet.</p>
+                <span className="text-xs font-semibold text-blue-900 group-hover:underline">View Portfolio →</span>
+              </div>
+
+              <div
+                onClick={() => setActiveTab('youth')}
+                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-blue-900 cursor-pointer transition group"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="p-3 bg-amber-50 text-amber-700 rounded-lg">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-900 transition" />
+                </div>
+                <h3 className="font-bold text-slate-900 mb-1">Youth & Civic Policy</h3>
+                <p className="text-xs text-slate-500 mb-4">{youthData.length} reporting periods logged in Google Sheet.</p>
+                <span className="text-xs font-semibold text-blue-900 group-hover:underline">View Portfolio →</span>
+              </div>
             </div>
           </div>
+        )}
 
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm col-span-2">
-            <h3 className="text-sm font-bold text-slate-700 mb-4">Data Collection Velocity (Cloud Stream)</h3>
-            <div className="h-56 w-full">
-              {dataPoints.length > 0 ? (
+        {/* VIEW 2: HEALTH PROJECT */}
+        {activeTab === 'health' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">Primary Healthcare & Facility Audits</h2>
+                <p className="text-sm text-slate-500">Live data streamed from rows marked project='health'</p>
+              </div>
+              <button onClick={() => setActiveTab('summary')} className="text-xs text-blue-900 font-semibold hover:underline">
+                ← Back to Overview
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Facility Audits vs Stockouts</h3>
+                <div className="h-56 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={healthData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="period" fontSize={12} />
+                      <YAxis fontSize={12} />
+                      <Tooltip />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Bar dataKey="metric1" name="Clinics Audited" fill="#0284c7" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="metric2" name="Stockouts Reported" fill="#e11d48" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">CAPI Submissions Record Flow</h3>
+                <div className="h-56 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={healthData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="period" fontSize={12} />
+                      <YAxis fontSize={12} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="metric3" name="Digital Records" stroke="#0f766e" strokeWidth={3} dot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 3: PROTECTION PROJECT */}
+        {activeTab === 'protection' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">Protection & Gender-Based Advocacy</h2>
+                <p className="text-sm text-slate-500">Live data streamed from rows marked project='protection'</p>
+              </div>
+              <button onClick={() => setActiveTab('summary')} className="text-xs text-blue-900 font-semibold hover:underline">
+                ← Back to Overview
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="text-sm font-bold text-slate-700 mb-4">Community Reach & Protection Cases</h3>
+              <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dataPoints}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="month" stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
+                  <BarChart data={protectionData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="period" fontSize={12} />
+                    <YAxis fontSize={12} />
                     <Tooltip />
-                    <Line type="monotone" dataKey="records" stroke="#0284c7" strokeWidth={3} dot={{ r: 4 }} />
+                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                    <Bar dataKey="metric1" name="People Reached" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="metric2" name="Cases Supported" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 4: YOUTH PROJECT */}
+        {activeTab === 'youth' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">Youth Leadership & Civic Policy</h2>
+                <p className="text-sm text-slate-500">Live data streamed from rows marked project='youth'</p>
+              </div>
+              <button onClick={() => setActiveTab('summary')} className="text-xs text-blue-900 font-semibold hover:underline">
+                ← Back to Overview
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="text-sm font-bold text-slate-700 mb-4">Youth Participation Trends</h3>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={youthData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="period" fontSize={12} />
+                    <YAxis fontSize={12} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="metric1" name="Participants" stroke="#f59e0b" strokeWidth={3} dot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-sm text-slate-400">
-                  Connect a published Google Sheet to populate data.
-                </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Task Management Panel */}
+        {/* GOOGLE SHEET TASK TRACKER */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 mb-4">Milestone Action Tracker</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-5 h-5 text-blue-900" />
+              <h3 className="text-base font-bold text-slate-900">Sheet-Driven Milestone Action Tracker</h3>
+            </div>
+            <span className="text-xs text-slate-400">Add or edit tasks directly in the Google Sheet</span>
+          </div>
 
-          <form onSubmit={handleAddTask} className="flex gap-2 mb-6">
-            <input
-              type="text"
-              placeholder="Add a new supervisory action or milestone..."
-              value={newTask}
-              onChange={(e) => setNewTask(e.target.value)}
-              className="flex-1 px-4 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
-            />
-            <button type="submit" className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition">
-              <Plus className="w-4 h-4" /> Add Task
-            </button>
-          </form>
+          <div className="space-y-2.5">
+            {sheetTasks.length > 0 ? (
+              sheetTasks
+                .filter(t => activeTab === 'summary' || t.project === activeTab)
+                .map((task) => (
+                  <div
+                    key={task.id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50/50"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${task.project === 'health' ? 'bg-emerald-100 text-emerald-800' :
+                          task.project === 'protection' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                        {task.project}
+                      </span>
+                      <span className={`text-xs font-medium ${task.status.toLowerCase() === 'completed' ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                        {task.title}
+                      </span>
+                    </div>
 
-          <div className="space-y-3">
-            {tasks.map((task) => (
-              <div
-                key={task.id}
-                onClick={() => toggleTaskStatus(task.id)}
-                className="flex items-center justify-between p-3.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition"
-              >
-                <span className={`text-sm font-medium ${task.status === 'Completed' ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-                  {task.title}
-                </span>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 ${task.status === 'Completed' ? 'bg-emerald-100 text-emerald-800' :
-                    task.status === 'In Progress' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                  {task.status === 'Completed' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                  {task.status === 'In Progress' && <Clock className="w-3.5 h-3.5" />}
-                  {task.status === 'Pending' && <AlertCircle className="w-3.5 h-3.5" />}
-                  {task.status}
-                </span>
-              </div>
-            ))}
+                    <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 ${task.status.toLowerCase() === 'completed' ? 'bg-emerald-100 text-emerald-800' :
+                        task.status.toLowerCase() === 'in progress' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                      {task.status.toLowerCase() === 'completed' && <CheckCircle2 className="w-3 h-3" />}
+                      {task.status.toLowerCase() === 'in progress' && <Clock className="w-3 h-3" />}
+                      {task.status.toLowerCase() === 'pending' && <AlertCircle className="w-3 h-3" />}
+                      {task.status}
+                    </span>
+                  </div>
+                ))
+            ) : (
+              <p className="text-xs text-slate-400 py-3 text-center">No tasks loaded. Add rows with type='task' to your Google Sheet.</p>
+            )}
           </div>
         </div>
 
-      </div>
+      </main>
     </div>
   );
 }
