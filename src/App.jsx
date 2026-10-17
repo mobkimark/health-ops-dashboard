@@ -1,10 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle, Plus, RefreshCw, Link2 } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Plus, RefreshCw, Link2, Lock, LogOut } from 'lucide-react';
 import Papa from 'papaparse';
 
 export default function App() {
-  // --- STATE DECLARATIONS ---
+  // --- AUTHENTICATION STATE ---
+  const TEAM_ACCESS_CODE = "FIELD2026"; // Change to your desired team passcode
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem('ops_auth') === 'true';
+  });
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [authError, setAuthError] = useState(false);
+
+  // --- DATA & TASK STATE ---
   const [dataPoints, setDataPoints] = useState(() => {
     const saved = localStorage.getItem('ops_metrics');
     return saved ? JSON.parse(saved) : [
@@ -28,7 +36,7 @@ export default function App() {
   const [newTask, setNewTask] = useState('');
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
-  // --- PERSISTENCE EFFECTS ---
+  // --- LOCAL PERSISTENCE ---
   useEffect(() => {
     localStorage.setItem('ops_metrics', JSON.stringify(dataPoints));
   }, [dataPoints]);
@@ -37,7 +45,7 @@ export default function App() {
     localStorage.setItem('ops_tasks', JSON.stringify(tasks));
   }, [tasks]);
 
-  // --- DATA SYNC LOGIC ---
+  // --- GOOGLE SHEETS LIVE SYNC ---
   const syncFromLiveSheet = async (urlToFetch) => {
     const targetUrl = urlToFetch || sheetUrl;
     if (!targetUrl.trim()) return;
@@ -75,7 +83,7 @@ export default function App() {
 
   // --- AUTO-SYNC INTERVAL (EVERY 30 SECONDS) ---
   useEffect(() => {
-    if (!autoSyncEnabled || !sheetUrl.trim()) return;
+    if (!isAuthenticated || !autoSyncEnabled || !sheetUrl.trim()) return;
 
     syncFromLiveSheet(sheetUrl);
 
@@ -84,9 +92,27 @@ export default function App() {
     }, 30000);
 
     return () => clearInterval(intervalId);
-  }, [sheetUrl, autoSyncEnabled]);
+  }, [sheetUrl, autoSyncEnabled, isAuthenticated]);
 
-  // --- CALCULATIONS & HANDLERS ---
+  // --- AUTH HANDLERS ---
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (passcodeInput.trim() === TEAM_ACCESS_CODE) {
+      sessionStorage.setItem('ops_auth', 'true');
+      setIsAuthenticated(true);
+      setAuthError(false);
+    } else {
+      setAuthError(true);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('ops_auth');
+    setIsAuthenticated(false);
+    setPasscodeInput('');
+  };
+
+  // --- TASK & METRIC HANDLERS ---
   const totalRecords = dataPoints.reduce((sum, item) => sum + Number(item.records || 0), 0);
 
   const handleAddTask = (e) => {
@@ -97,7 +123,7 @@ export default function App() {
   };
 
   const toggleTaskStatus = (id) => {
-    setTasks(tasks.map(t => {
+    setTasks(tasks.map((t) => {
       if (t.id === id) {
         const next = t.status === 'Completed' ? 'Pending' : t.status === 'Pending' ? 'In Progress' : 'Completed';
         return { ...t, status: next };
@@ -106,6 +132,44 @@ export default function App() {
     }));
   };
 
+  // --- GATE SCREEN: PASSCODE LOCK ---
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans text-slate-800">
+        <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200">
+          <div className="w-12 h-12 bg-blue-50 text-blue-900 rounded-xl flex items-center justify-center mb-4">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-1">Restricted Field Portal</h2>
+          <p className="text-xs text-slate-500 mb-6">Enter team passcode to view live tracker data</p>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                placeholder="Enter passcode..."
+                value={passcodeInput}
+                onChange={(e) => { setPasscodeInput(e.target.value); setAuthError(false); }}
+                className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-900 outline-none"
+                autoFocus
+              />
+              {authError && (
+                <p className="text-xs text-rose-600 mt-1.5 font-medium">Incorrect passcode. Try again.</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-blue-950 text-white font-medium rounded-lg text-sm hover:bg-blue-900 transition"
+            >
+              Access Tracker
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN DASHBOARD INTERFACE ---
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -140,6 +204,16 @@ export default function App() {
             >
               <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
               {isSyncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+
+            {/* Lock / Sign Out Button */}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-lg text-xs font-medium transition"
+              title="Lock Dashboard"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Lock
             </button>
           </div>
         </header>
