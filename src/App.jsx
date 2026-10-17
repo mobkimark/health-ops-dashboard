@@ -472,7 +472,7 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2.5">
                       <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${task.project === 'health' ? 'bg-emerald-100 text-emerald-800' :
-                          task.project === 'protection' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                        task.project === 'protection' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
                         }`}>
                         {task.project}
                       </span>
@@ -482,7 +482,7 @@ export default function App() {
                     </div>
 
                     <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 ${task.status.toLowerCase() === 'completed' ? 'bg-emerald-100 text-emerald-800' :
-                        task.status.toLowerCase() === 'in progress' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                      task.status.toLowerCase() === 'in progress' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
                       }`}>
                       {task.status.toLowerCase() === 'completed' && <CheckCircle2 className="w-3 h-3" />}
                       {task.status.toLowerCase() === 'in progress' && <Clock className="w-3 h-3" />}
